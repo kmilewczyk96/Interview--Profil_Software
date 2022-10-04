@@ -1,2 +1,4 @@
-# profil_backend_internship_22
-Profil Software internship assignment.
+# Web Crawler:
+Author: Karol Milewczyk
+
+## How to run:
