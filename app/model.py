@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urljoin
 
 import requests
@@ -14,21 +15,52 @@ class Model:
         self.validator = CommandValidators()
 
     def crawl(self, url: str, extension: str, path: str):
-        """Crawls the page and its sub-pages. Exports data to provided output in one of two available extensions."""
-        self.page_details.create_record(url=url, is_base=True)
-        self._search_for_links(url=url)
-
+        """Crawls the page and its subpages. Exports data to provided output in one of two available extensions."""
+        self._collect_data(url=url)
         output = f'{path}.{extension}'
         if extension.lower() == 'csv':
             self._save_as_csv(output=output)
         if extension.lower() == 'json':
             self._save_as_json(output=output)
 
-    def print_tree(self, url: str):
-        pass
+    def print_tree(self, url: str) -> list:
+        """
+        Crawls the page and its subpages.
+        Returns list of dicts, which contain: URLs, their indentation and subpages count.
+        """
+        self._collect_data(url=url)
+        urls = [url for url in self.page_details.data]
+        # Sort urls by the indentation:
+        urls.sort(key=lambda x: x.count('/'))
+
+        excluded = []
+        tree = []
+
+        def search_for_children(current_url, indentation=0):
+            subpages_count = 0
+            for u in urls:
+                if u.startswith(current_url) and u not in excluded:
+                    excluded.append(u)
+                    subpages_count += search_for_children(u, indentation + 1) + 1
+
+            tree.append({'url': current_url, 'indentation': indentation, 'subpages_count': subpages_count})
+            return subpages_count
+
+        # Create tree:
+        excluded.append(url)
+        search_for_children(url)
+        tree.reverse()
+
+        return tree
+
+    def _collect_data(self, url):
+        """Fills page_details.data."""
+        # Manually add first record:
+        self.page_details.create_record(url=url, is_base=True)
+        self._search_for_links(url=url)
 
     def _save_as_csv(self, output: str):
-        """Converts collected data into CSV and saves to provided output."""
+        """Saves collected data as CSV file."""
         headers = ['link', 'title', 'number of internal links', 'number of external links', 'reference count']
         with open(output, 'w') as file:
             # Create headers:
@@ -38,11 +70,13 @@ class Model:
                 file.write(','.join([str(i) for i in detail_dict.values()]) + '\n')
 
     def _save_as_json(self, output: str):
-        """Converts collected data into JSON and saves to provided output."""
-        pass
+        """Saves collected data as JSON file."""
+        data = list(self.page_details.data.values())
+        with open(output, 'w') as file:
+            json.dump(data, file)
 
     def _search_for_links(self, url: str):
-        """Crawls single page. Updates data for page details."""
+        """Crawls subpages until it can't find new internal links."""
         links_to_crawl = set()  # Set of internal links that weren't crawled yet.
         internal_links = set()  # All internal links found on current page.
         external_links = set()  # All external links found on current page.

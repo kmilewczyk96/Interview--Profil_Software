@@ -37,19 +37,13 @@ class CommandLineInterface(typer.Typer):
                     help='An absolute path to the output file. The extension will be provided by program!'
                 )
         ) -> None:
-            if self._model.validator.is_valid_url(url=url):
-                pass
-            else:
+            if not self._model.validator.is_valid_url(url=url):
                 typer.secho(ERRORS[URL_ERROR], fg=typer.colors.RED)
 
-            if self._model.validator.is_valid_extension(extension=extension):
-                pass
-            else:
+            if not self._model.validator.is_valid_extension(extension=extension):
                 typer.secho(ERRORS[EXTENSION_ERROR], fg=typer.colors.RED)
 
-            if self._model.validator.is_valid_path(path=path):
-                pass
-            else:
+            if not self._model.validator.is_valid_path(path=path):
                 typer.secho(ERRORS[PATH_ERROR], fg=typer.colors.RED)
 
             if not self._model.validator.valid:
@@ -57,21 +51,28 @@ class CommandLineInterface(typer.Typer):
 
             typer.echo('All command validations passed. Proceeding...')
             self._model.crawl(url=url, extension=extension, path=path)
-            typer.echo(self._model.page_details.data)
 
             return None
 
         @self.command('print-tree')
         def print_tree(
-                page: str = typer.Option(
+                url: str = typer.Option(
                     ...,
                     '--page',
                     help='A full URL you\'d like to get tree of.'
                 )
         ) -> None:
-            if self._model.validator.is_valid_url(url=page):
-                pass
-            else:
+            if not self._model.validator.is_valid_url(url=url):
                 typer.secho(ERRORS[URL_ERROR], fg=typer.colors.RED)
+
+            if not self._model.validator.valid:
+                return None
+
+            tree_dict = self._model.print_tree(url=url)
+            typer.echo('Printing tree:')
+            for branch in tree_dict:
+                typer.echo(
+                    f"{branch['indentation'] * '    '}{branch['url']}  ({branch['subpages_count']})"
+                )
 
             return None
