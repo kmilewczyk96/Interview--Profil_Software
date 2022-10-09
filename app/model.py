@@ -1,11 +1,12 @@
 import csv
 import json
+import asyncio
 from urllib.parse import urljoin
 
-import requests
 import typer
 import validators
 from bs4 import BeautifulSoup
+from httpx import AsyncClient
 
 from app.page_details import PageDetails
 from app.command_validators import CommandValidators
@@ -63,7 +64,27 @@ class Model:
         """Fills page_details.data."""
         # Manually add first record:
         self.page_details.create_record(url=url, is_base=True)
-        self._search_for_links(url=url)
+
+        def crawl_in(urls: list):
+            urls = asyncio.run(self._run(urls))
+            for x in urls:
+                crawl_in(urls=x)
+
+        crawl_in([url])
+
+    async def _get_requests(self, url: str, client: AsyncClient, throttler):
+        async with throttler:
+            request = await client.get(url=url, follow_redirects=False)
+            return self._search_for_links(url=url, request=request)
+
+    async def _run(self, urls: list):
+        throttler = asyncio.Semaphore(15)
+        async with AsyncClient(timeout=300, verify=False) as client:
+            urls_to_crawl = []
+            for url in urls:
+                urls_to_crawl.append(self._get_requests(url=url, client=client, throttler=throttler))
+            url_sets = await asyncio.gather(*urls_to_crawl)
+            return url_sets
 
     def _save_as_csv(self, output: str):
         """Saves collected data as CSV file."""
@@ -80,14 +101,13 @@ class Model:
         with open(output, 'w') as file:
             json.dump(data, file)
 
-    def _search_for_links(self, url: str):
+    def _search_for_links(self, url: str, request: AsyncClient.request):
         typer.echo(f'Checking URL: {url}')
         """Crawls subpages until it can't find new internal links."""
         links_to_crawl = set()  # Set of internal links that weren't crawled yet.
         internal_links = set()  # All internal links found on current page.
         external_links = set()  # All external links found on current page.
 
-        request = requests.get(url=url, allow_redirects=False)
         soup = BeautifulSoup(request.text, features='html.parser')
 
         title = soup.find('title')
@@ -127,5 +147,4 @@ class Model:
             self.page_details.update_reference_count(url=link)
 
         # Call this function until subpage with no new subpages is found:
-        for link in links_to_crawl:
-            self._search_for_links(url=link)
+        return list(links_to_crawl)
