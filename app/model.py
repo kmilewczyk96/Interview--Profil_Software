@@ -1,19 +1,25 @@
+import csv
 import json
 from urllib.parse import urljoin
 
 import requests
+import typer
+import validators
 from bs4 import BeautifulSoup
 
 from app.page_details import PageDetails
 from app.command_validators import CommandValidators
+from app.utils import count_time_execution
 
 
 class Model:
     """Contains methods which execute App's CLI commands."""
+
     def __init__(self):
         self.page_details = PageDetails()
         self.validator = CommandValidators()
 
+    @count_time_execution
     def crawl(self, url: str, extension: str, path: str):
         """Crawls the page and its subpages. Exports data to provided output in one of two available extensions."""
         self._collect_data(url=url)
@@ -36,19 +42,19 @@ class Model:
         excluded = []
         tree = []
 
-        def search_for_children(current_url, indentation=0):
+        def _search_for_children(current_url, indentation=0):
             subpages_count = 0
             for u in urls:
                 if u.startswith(current_url) and u not in excluded:
                     excluded.append(u)
-                    subpages_count += search_for_children(u, indentation + 1) + 1
+                    subpages_count += _search_for_children(u, indentation + 1) + 1
 
             tree.append({'url': current_url, 'indentation': indentation, 'subpages_count': subpages_count})
             return subpages_count
 
         # Create tree:
         excluded.append(url)
-        search_for_children(url)
+        _search_for_children(url)
         tree.reverse()
 
         return tree
@@ -61,13 +67,12 @@ class Model:
 
     def _save_as_csv(self, output: str):
         """Saves collected data as CSV file."""
-        headers = ['link', 'title', 'number of internal links', 'number of external links', 'reference count']
+        headers = ['url', 'title', 'internal links', 'external links', 'reference count']
         with open(output, 'w') as file:
-            # Create headers:
-            file.write(','.join(headers) + '\n')
-            # For each detail dict in collected data join its values with comma.
+            writer = csv.DictWriter(file, fieldnames=headers)
+            writer.writeheader()
             for detail_dict in self.page_details.data.values():
-                file.write(','.join([str(i) for i in detail_dict.values()]) + '\n')
+                writer.writerow(detail_dict)
 
     def _save_as_json(self, output: str):
         """Saves collected data as JSON file."""
@@ -76,12 +81,13 @@ class Model:
             json.dump(data, file)
 
     def _search_for_links(self, url: str):
+        typer.echo(f'Checking URL: {url}')
         """Crawls subpages until it can't find new internal links."""
         links_to_crawl = set()  # Set of internal links that weren't crawled yet.
         internal_links = set()  # All internal links found on current page.
         external_links = set()  # All external links found on current page.
 
-        request = requests.get(url=url)
+        request = requests.get(url=url, allow_redirects=False)
         soup = BeautifulSoup(request.text, features='html.parser')
 
         title = soup.find('title')
@@ -100,16 +106,18 @@ class Model:
                 if not external:
                     # Create full link with built-in urljoin:
                     full_link = urljoin(url, link)
-                    if full_link not in self.page_details.data:
-                        self.page_details.create_record(url=full_link)
-                        links_to_crawl.add(full_link)
-                        internal_links.add(full_link)
-                    else:
-                        if full_link != url:
+                    if not isinstance(validators.url(full_link), validators.ValidationFailure):
+                        if full_link not in self.page_details.data:
+                            self.page_details.create_record(url=full_link)
+                            links_to_crawl.add(full_link)
                             internal_links.add(full_link)
+                        else:
+                            if full_link != url:
+                                internal_links.add(full_link)
 
                 else:
-                    external_links.add(link)
+                    if not isinstance(validators.url(link), validators.ValidationFailure):
+                        external_links.add(link)
 
         # Update links count for current page:
         self.page_details.update_links_count(url=url, internal=len(internal_links), external=len(external_links))
