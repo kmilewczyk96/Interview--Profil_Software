@@ -1,13 +1,16 @@
+import asyncio
 import csv
 import json
-import asyncio
 from urllib.parse import urljoin
 
+import httpx
 import typer
 import validators
+from aiolimiter import AsyncLimiter
 from bs4 import BeautifulSoup
 from httpx import AsyncClient
 
+from app import ERRORS, CONNECTION_ERROR
 from app.page_details import PageDetails
 from app.command_validators import CommandValidators
 from app.utils import count_time_execution
@@ -15,27 +18,31 @@ from app.utils import count_time_execution
 
 class Model:
     """Contains methods which execute App's CLI commands."""
-
-    def __init__(self):
+    def __init__(self, requests_limiter=30):
+        """:param requests_limiter: Optional parameter that limits frequency of requests send to the page."""
+        self.throttler = AsyncLimiter(max_rate=requests_limiter, time_period=1)
         self.page_details = PageDetails()
         self.validator = CommandValidators()
 
     @count_time_execution
     def crawl(self, url: str, extension: str, path: str):
         """Crawls the page and its subpages. Exports data to provided output in one of two available extensions."""
-        self._collect_data(url=url)
+        self.page_details.create_record(url=url, is_base=True)
+        self._collect_data(urls=[url])
         output = f'{path}.{extension}'
         if extension.lower() == 'csv':
             self._save_as_csv(output=output)
         if extension.lower() == 'json':
             self._save_as_json(output=output)
 
+    @count_time_execution
     def print_tree(self, url: str) -> list:
         """
         Crawls the page and its subpages.
         Returns list of dicts, which contain: URLs, their indentation and subpages count.
         """
-        self._collect_data(url=url)
+        self.page_details.create_record(url=url, is_base=True)
+        self._collect_data(urls=[url])
         urls = [url for url in self.page_details.data]
         # Sort urls by the indentation:
         urls.sort(key=lambda x: x.count('/'))
@@ -61,31 +68,37 @@ class Model:
 
         return tree
 
-    def _collect_data(self, url):
-        """Fills page_details.data."""
-        # Manually add first record:
-        self.page_details.create_record(url=url, is_base=True)
+    async def _get_requests(self, url: str, client: AsyncClient) -> list:
+        """Sends request to the URL. Returns new links from requested page."""
+        # You can change throttling value by setting model's requests_limit parameter.
+        async with self.throttler:
+            try:
+                typer.echo(f'Sending request to: {url}')
+                request = await client.get(url=url, follow_redirects=False)
+            except TimeoutError:
+                typer.secho(f'Request timeout for: {url}', fg=typer.colors.YELLOW)
+                return []
+            except httpx.ConnectError:
+                typer.secho(ERRORS[CONNECTION_ERROR], fg=typer.colors.RED)
+                raise typer.Exit()
+            else:
+                return self._search_for_links(url=url, request=request)
 
-        def crawl_in(urls: list):
-            urls = asyncio.run(self._run(urls))
-            for x in urls:
-                crawl_in(urls=x)
-
-        crawl_in([url])
-
-    async def _get_requests(self, url: str, client: AsyncClient, throttler):
-        async with throttler:
-            request = await client.get(url=url, follow_redirects=False)
-            return self._search_for_links(url=url, request=request)
-
-    async def _run(self, urls: list):
-        throttler = asyncio.Semaphore(15)
-        async with AsyncClient(timeout=300, verify=False) as client:
+    async def _run(self, urls: list) -> tuple:
+        """Coordinates collecting requests. Returns tuple of new URLs to crawl."""
+        async with AsyncClient(timeout=120, verify=False) as client:
             urls_to_crawl = []
             for url in urls:
-                urls_to_crawl.append(self._get_requests(url=url, client=client, throttler=throttler))
-            url_sets = await asyncio.gather(*urls_to_crawl)
-            return url_sets
+                urls_to_crawl.append(self._get_requests(url=url, client=client))
+            new_urls = await asyncio.gather(*urls_to_crawl)
+            return new_urls
+
+    def _collect_data(self, urls: list):
+        """Fills page_details.data."""
+        # Manually add first record:
+        new_urls = asyncio.run(self._run(urls))
+        for new_url in new_urls:
+            self._collect_data(urls=new_url)
 
     def _save_as_csv(self, output: str):
         """Saves collected data as CSV file."""
@@ -102,9 +115,8 @@ class Model:
         with open(output, 'w') as file:
             json.dump(data, file)
 
-    def _search_for_links(self, url: str, request: AsyncClient.request):
-        typer.echo(f'Checking URL: {url}')
-        """Crawls subpages until it can't find new internal links."""
+    def _search_for_links(self, url: str, request: AsyncClient.request) -> list:
+        """Crawls URL and returns list of new unique URLs."""
         links_to_crawl = set()  # Set of internal links that weren't crawled yet.
         internal_links = set()  # All internal links found on current page.
         external_links = set()  # All external links found on current page.
