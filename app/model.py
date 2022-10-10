@@ -45,10 +45,11 @@ class Model:
 
         def _search_for_children(current_url, indentation=0):
             subpages_count = 0
-            for u in urls:
-                if u.startswith(current_url) and u not in excluded:
-                    excluded.append(u)
-                    subpages_count += _search_for_children(u, indentation + 1) + 1
+            if current_url.endswith('/'):
+                for u in urls:
+                    if u.startswith(current_url) and u not in excluded:
+                        excluded.append(u)
+                        subpages_count += _search_for_children(u, indentation + 1) + 1
 
             tree.append({'url': current_url, 'indentation': indentation, 'subpages_count': subpages_count})
             return subpages_count
@@ -146,5 +147,5 @@ class Model:
         for link in internal_links - links_to_crawl:
             self.page_details.update_reference_count(url=link)
 
-        # Call this function until subpage with no new subpages is found:
+        # Return the list of new URLs to crawl:
         return list(links_to_crawl)
