@@ -13,5 +13,5 @@ ERRORS = {
     EXTENSION_ERROR: 'ERROR: Provided format is not supported.',
     PATH_ERROR: 'ERROR: Provided output path is invalid.',
     URL_ERROR: 'ERROR: Provided page URL is invalid.',
-    CONNECTION_ERROR: 'You went offline. Try again after establishing connection.',
+    CONNECTION_ERROR: 'Script could not establish connection with provided URL.',
 }

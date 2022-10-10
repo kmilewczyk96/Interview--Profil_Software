@@ -3,6 +3,7 @@ from time import time
 
 
 def count_time_execution(func_to_time):
+    """Decorator that measures command's execution time."""
     def wrapper(*args, **kwargs):
         typer.secho('Starting the timer.')
         start = time()

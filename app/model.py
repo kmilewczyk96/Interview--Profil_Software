@@ -95,7 +95,6 @@ class Model:
 
     def _collect_data(self, urls: list):
         """Fills page_details.data."""
-        # Manually add first record:
         new_urls = asyncio.run(self._run(urls))
         for new_url in new_urls:
             self._collect_data(urls=new_url)
